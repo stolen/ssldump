@@ -1,0 +1,9 @@
+.eunit
+deps
+*.o
+*.beam
+*.app
+*.plt
+erl_crash.dump
+.*.sw?
+.erlang.mk.packages.*
