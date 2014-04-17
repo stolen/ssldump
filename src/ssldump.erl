@@ -1,6 +1,9 @@
 -module(ssldump).
 -behavior(ranch_protocol).
 
+-include_lib("ssl/src/ssl_connection.hrl"). % for #state{}
+-include_lib("ssl/src/ssl_api.hrl"). % for #sslsocket{}
+
 -export([proxy/1, proxy/3]).
 -export([start_link/4, init/5]).
 -export([loop/4]).
@@ -70,7 +73,7 @@ server([PortStr, CertPrefix]) ->
 server(Port, CertPrefix) ->
   application:ensure_all_started(ssl),
   {ok, ListenSocket} = ssl:listen(Port, [{certfile, CertPrefix ++ ".cert"}, {keyfile, CertPrefix ++ ".key"}, {reuseaddr, true}, {ciphers, server_ciphers()}]),
-  [start_acceptor(ListenSocket) || _ <- lists:seq(1, 10)],
+  [start_acceptor(ListenSocket) || _ <- lists:seq(1, 3)],
   pool_watcher(ListenSocket).
 
 server_ciphers() ->
@@ -91,8 +94,12 @@ ssl_acceptor(ListenSocket) ->
   {ok, Socket} = ssl:transport_accept(ListenSocket),
   io:format("Accepting SSL in ~w~n", [self()]),
   ok = ssl:ssl_accept(Socket),
+  print_state(Socket),
   {ok, _} = ssl:recv(Socket, 0, 10000),
   ok = ssl:send(Socket, "HTTP/1.1 401 Unauthorized\nContent-Length: 0\n\n"),
   ok = ssl:close(Socket).
 
 
+print_state(#sslsocket{pid = Pid}) ->
+  {State, #state{socket_options = Opts}} = sys:get_state(Pid),
+  io:format("Socket state: ~w, options: ~120p~n", [State, Opts]).
