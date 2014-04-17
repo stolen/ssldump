@@ -5,6 +5,9 @@
 -export([start_link/4, init/5]).
 -export([loop/4]).
 
+-export([server/1, server/2]).
+-export([ssl_acceptor/1]).
+
 -define(CONTENT_TYPE_APPLICATION_DATA, 23).
 
 proxy([LPortAtom, RHostAtom, RPortAtom]) when is_atom(LPortAtom), is_atom(RPortAtom), is_atom(RHostAtom) ->
@@ -50,7 +53,46 @@ recv_header(Transport, Socket, Label) ->
 log_packet(?CONTENT_TYPE_APPLICATION_DATA, _Header, _Fragment, _Label) ->
   ok;
 log_packet(_, Header, Fragment, Label) ->
-  io:format("~s  ~160p~n", [Label, <<Header/binary, Fragment/binary>>]).
+  io:format("~s  ~120p~n", [Label, <<Header/binary, Fragment/binary>>]).
 
 log_shutdown(Label, Error) ->
-  io:format("~s shutdown: ~160p~n", [Label, Error]).
+  io:format("~s shutdown: ~120p~n", [Label, Error]).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%  Dummy SSL acceptor
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+server([PortStr, CertPrefix]) ->
+  spawn_link(?MODULE, server, [list_to_integer(PortStr), CertPrefix]).
+
+server(Port, CertPrefix) ->
+  application:ensure_all_started(ssl),
+  {ok, ListenSocket} = ssl:listen(Port, [{certfile, CertPrefix ++ ".cert"}, {keyfile, CertPrefix ++ ".key"}, {reuseaddr, true}, {ciphers, server_ciphers()}]),
+  [start_acceptor(ListenSocket) || _ <- lists:seq(1, 10)],
+  pool_watcher(ListenSocket).
+
+server_ciphers() ->
+  [{KE, C, H} || {KE, C, H} <- ssl:cipher_suites(),
+    lists:sublist(atom_to_list(KE), 4) /= "ecdh" orelse H == sha].
+
+pool_watcher(ListenSocket) ->
+  receive
+    {'DOWN', _, _, _, _} ->
+      start_acceptor(ListenSocket)
+  end,
+  pool_watcher(ListenSocket).
+
+start_acceptor(ListenSocket) ->
+  spawn_monitor(?MODULE, ssl_acceptor, [ListenSocket]).
+
+ssl_acceptor(ListenSocket) ->
+  {ok, Socket} = ssl:transport_accept(ListenSocket),
+  io:format("Accepting SSL in ~w~n", [self()]),
+  ok = ssl:ssl_accept(Socket),
+  {ok, _} = ssl:recv(Socket, 0, 10000),
+  ok = ssl:send(Socket, "HTTP/1.1 401 Unauthorized\nContent-Length: 0\n\n"),
+  ok = ssl:close(Socket).
+
+
